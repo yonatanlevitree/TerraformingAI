@@ -43,7 +43,7 @@ class TerrainWell:
         return self.c * self.depth + self.d * self.volume
 
 class TerrainOptimizer:
-    def __init__(self, grid_size=100, z_max=60, num_cores=5, seed=42):
+    def __init__(self, grid_size=100, z_max=60, num_cores=5, seed=42, well_optimizer="default"):
         """
         Initialize the terrain optimizer with 3D geological data.
         
@@ -52,10 +52,12 @@ class TerrainOptimizer:
             z_max: Maximum depth for geocores
             num_cores: Number of geocores to generate
             seed: Random seed for reproducibility
+            well_optimizer: Optimization method to use ("default" or "genetic")
         """
         self.grid_size = grid_size
         self.z_max = z_max
         self.seed = seed
+        self.well_optimizer = well_optimizer
         
         # Set up the grid
         self.x_vals = np.linspace(0, 100, grid_size)
@@ -94,6 +96,16 @@ class TerrainOptimizer:
         
         # Store wells
         self.wells = []
+        
+        # Initialize genetic optimizer if needed
+        if well_optimizer == "genetic":
+            from genetic_single_optimizer import GeneticSingleOptimizer
+            self.genetic_optimizer = GeneticSingleOptimizer(
+                grid_size=grid_size,
+                z_max=z_max,
+                num_cores=num_cores,
+                seed=seed
+            )
     
     def extract_surface(self, pressure_3D, threshold=5000):
         """
@@ -356,109 +368,116 @@ class TerrainOptimizer:
         Returns:
             Optimized (depth, volume) for the well
         """
-        # Find grid indices for the well location
-        ix = np.abs(self.x_vals - x0).argmin()
-        iy = np.abs(self.y_vals - y0).argmin()
-        
-        # Define bounds for depth and volume
-        bounds = [(5, 50), (10, 500)]  # (depth_min, depth_max), (volume_min, volume_max)
-        
-        # Try multiple initial starting points to avoid local minima
-        best_params = None
-        best_loss = float('inf')
-        
-        # Define different starting points to try
-        starting_points = [
-            [bounds[0][0], bounds[1][0]],  # Minimum depth, minimum volume
-            [bounds[0][1], bounds[1][1]],  # Maximum depth, maximum volume
-            [(bounds[0][0] + bounds[0][1]) / 2, (bounds[1][0] + bounds[1][1]) / 2],  # Middle values
-            [bounds[0][0], bounds[1][1]],  # Minimum depth, maximum volume
-            [bounds[0][1], bounds[1][0]]   # Maximum depth, minimum volume
-        ]
-        
-        # Define the objective function for minimization
-        def objective(params):
-            depth, volume = params
-            
-            # Create a temporary well
-            temp_well = TerrainWell(x0, y0, depth, volume)
-            
-            # Save current state
-            prev_slurry = self.slurry_3D.copy()
-            prev_pressure = self.pressure_3D.copy()
-            
-            # Apply the well
-            new_terrain = self.apply_well(temp_well)
-            
-            # Calculate the resulting discrepancy in a local window around the well
-            window_size = 15  # Increased window size to better capture well effects
-            x_start = max(0, ix - window_size)
-            x_end = min(self.grid_size - 1, ix + window_size)
-            y_start = max(0, iy - window_size)
-            y_end = min(self.grid_size - 1, iy + window_size)
-            
-            local_discrepancy = goal_terrain[x_start:x_end, y_start:y_end] - \
-                               new_terrain[x_start:x_end, y_start:y_end]
-            
-            # Calculate loss - asymmetric to penalize overshooting more than undershooting
-            undershooting = local_discrepancy[local_discrepancy > 0]
-            overshooting = local_discrepancy[local_discrepancy < 0]
-            
-            loss_undershot = np.sum(undershooting**2) if len(undershooting) > 0 else 0
-            loss_overshot = np.sum(overshooting**2) * 1.5 if len(overshooting) > 0 else 0  # Reduced penalty for overshooting
-            
-            # If the well made no difference, penalize highly
-            if np.all(new_terrain == current_terrain):
-                loss = float('inf')
-            else:
-                loss = loss_undershot + loss_overshot
-            
-            # Add cost penalty - reduced to encourage exploration of larger wells
-            cost_weight = 0.0005  # Reduced weight for cost in the objective function 
-            cost = temp_well.monetary_cost() * cost_weight
-            
-            # Restore previous state (this is a simulation only)
-            self.slurry_3D = prev_slurry
-            self.pressure_3D = prev_pressure
-            self.pressure_snapshots.pop()  # Remove the simulated snapshot
-            self.surface_snapshots.pop()   # Remove the simulated snapshot
-            
-            if hasattr(self, 'wells') and len(self.wells) > 0 and self.wells[-1] == temp_well:
-                self.wells.pop()  # Remove the temporary well
-            
-            # Total loss combines terrain discrepancy and cost
-            total_loss = loss + cost
-            
-            return total_loss
-        
-        # Try each starting point
-        for i, initial_params in enumerate(starting_points):
-            # Run optimization with this starting point
-            result = minimize(
-                objective, 
-                initial_params, 
-                method='Nelder-Mead', 
-                bounds=bounds, 
-                options={
-                    'maxiter': 150,        # Increased from 100
-                    'xatol': 1e-3,         # Reduced tolerance for more precision
-                    'fatol': 1e-3,         # Reduced tolerance for more precision
-                    'adaptive': True       # Use adaptive step size for better convergence
-                }
-            )
-            
-            # Check if this is better than previous results
-            if result.success and result.fun < best_loss:
-                best_loss = result.fun
-                best_params = result.x
-                print(f"  Found better parameters at starting point {i+1}: {best_params}, loss: {best_loss}")
-        
-        # If we found a good solution, return it
-        if best_params is not None:
-            return best_params
+        if self.well_optimizer == "genetic":
+            # Use genetic optimizer
+            self.genetic_optimizer.set_terrain(goal_terrain)
+            optimized_x, optimized_y, optimized_depth, optimized_volume = self.genetic_optimizer.optimize_well_params()
+            return optimized_depth, optimized_volume
         else:
-            print(f"Optimization failed for all starting points. Using default parameters.")
-            return [10, 50]  # Default mid-range values if optimization fails
+            # Use default optimizer
+            # Find grid indices for the well location
+            ix = np.abs(self.x_vals - x0).argmin()
+            iy = np.abs(self.y_vals - y0).argmin()
+            
+            # Define bounds for depth and volume
+            bounds = [(5, 50), (10, 500)]  # (depth_min, depth_max), (volume_min, volume_max)
+            
+            # Try multiple initial starting points to avoid local minima
+            best_params = None
+            best_loss = float('inf')
+            
+            # Define different starting points to try
+            starting_points = [
+                [bounds[0][0], bounds[1][0]],  # Minimum depth, minimum volume
+                [bounds[0][1], bounds[1][1]],  # Maximum depth, maximum volume
+                [(bounds[0][0] + bounds[0][1]) / 2, (bounds[1][0] + bounds[1][1]) / 2],  # Middle values
+                [bounds[0][0], bounds[1][1]],  # Minimum depth, maximum volume
+                [bounds[0][1], bounds[1][0]]   # Maximum depth, minimum volume
+            ]
+            
+            # Define the objective function for minimization
+            def objective(params):
+                depth, volume = params
+                
+                # Create a temporary well
+                temp_well = TerrainWell(x0, y0, depth, volume)
+                
+                # Save current state
+                prev_slurry = self.slurry_3D.copy()
+                prev_pressure = self.pressure_3D.copy()
+                
+                # Apply the well
+                new_terrain = self.apply_well(temp_well)
+                
+                # Calculate the resulting discrepancy in a local window around the well
+                window_size = 15  # Increased window size to better capture well effects
+                x_start = max(0, ix - window_size)
+                x_end = min(self.grid_size - 1, ix + window_size)
+                y_start = max(0, iy - window_size)
+                y_end = min(self.grid_size - 1, iy + window_size)
+                
+                local_discrepancy = goal_terrain[x_start:x_end, y_start:y_end] - \
+                                   new_terrain[x_start:x_end, y_start:y_end]
+                
+                # Calculate loss - asymmetric to penalize overshooting more than undershooting
+                undershooting = local_discrepancy[local_discrepancy > 0]
+                overshooting = local_discrepancy[local_discrepancy < 0]
+                
+                loss_undershot = np.sum(undershooting**2) if len(undershooting) > 0 else 0
+                loss_overshot = np.sum(overshooting**2) * 1.5 if len(overshooting) > 0 else 0  # Reduced penalty for overshooting
+                
+                # If the well made no difference, penalize highly
+                if np.all(new_terrain == current_terrain):
+                    loss = float('inf')
+                else:
+                    loss = loss_undershot + loss_overshot
+                
+                # Add cost penalty - reduced to encourage exploration of larger wells
+                cost_weight = 0.0005  # Reduced weight for cost in the objective function 
+                cost = temp_well.monetary_cost() * cost_weight
+                
+                # Restore previous state (this is a simulation only)
+                self.slurry_3D = prev_slurry
+                self.pressure_3D = prev_pressure
+                self.pressure_snapshots.pop()  # Remove the simulated snapshot
+                self.surface_snapshots.pop()   # Remove the simulated snapshot
+                
+                if hasattr(self, 'wells') and len(self.wells) > 0 and self.wells[-1] == temp_well:
+                    self.wells.pop()  # Remove the temporary well
+                
+                # Total loss combines terrain discrepancy and cost
+                total_loss = loss + cost
+                
+                return total_loss
+            
+            # Try each starting point
+            for i, initial_params in enumerate(starting_points):
+                # Run optimization with this starting point
+                result = minimize(
+                    objective, 
+                    initial_params, 
+                    method='Nelder-Mead', 
+                    bounds=bounds, 
+                    options={
+                        'maxiter': 150,        # Increased from 100
+                        'xatol': 1e-3,         # Reduced tolerance for more precision
+                        'fatol': 1e-3,         # Reduced tolerance for more precision
+                        'adaptive': True       # Use adaptive step size for better convergence
+                    }
+                )
+                
+                # Check if this is better than previous results
+                if result.success and result.fun < best_loss:
+                    best_loss = result.fun
+                    best_params = result.x
+                    print(f"  Found better parameters at starting point {i+1}: {best_params}, loss: {best_loss}")
+            
+            # If we found a good solution, return it
+            if best_params is not None:
+                return best_params
+            else:
+                print(f"Optimization failed for all starting points. Using default parameters.")
+                return [10, 50]  # Default mid-range values if optimization fails
     
     def iterative_optimization(self, goal_terrain, max_iterations=10, 
                              max_monetary_budget=10000, max_time_budget=1000):

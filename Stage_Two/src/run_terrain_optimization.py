@@ -3,7 +3,7 @@
 Terrain Optimization through Strategic Slurry Injection
 
 This script demonstrates how to transform terrain surfaces through underground slurry injection,
-using an optimization approach similar to Stage One but with more realistic 3D geological modeling.
+using both default and genetic optimization approaches for comparison.
 """
 
 import os
@@ -20,8 +20,12 @@ from terrain_optimization import TerrainOptimizer, TerrainWell
 
 def main():
     """Main function to run the terrain optimization demonstration"""
+    # Choose optimization method: "default" or "genetic"
+    OPTIMIZATION_METHOD = "genetic"  # Change this to switch between methods
+    
     print("="*80)
     print("Terrain Optimization through Strategic Slurry Injection")
+    print(f"Using {OPTIMIZATION_METHOD} optimization method")
     print("="*80)
     
     # Set the random seed for reproducibility
@@ -30,7 +34,13 @@ def main():
     # 1. Initialize the Terrain Optimizer
     print("\nInitializing Terrain Optimizer...")
     grid_size = 50  # Use a smaller grid for faster computation
-    optimizer = TerrainOptimizer(grid_size=grid_size, z_max=60, num_cores=5, seed=42)
+    optimizer = TerrainOptimizer(
+        grid_size=grid_size,
+        z_max=60,
+        num_cores=5,
+        seed=42,
+        well_optimizer=OPTIMIZATION_METHOD
+    )
     
     # 2. Plot the initial surface
     print("Generating initial terrain from geocore data...")
@@ -149,7 +159,13 @@ def main():
     print("\nRunning full iterative optimization...")
     
     # Reset the optimizer to start fresh
-    optimizer = TerrainOptimizer(grid_size=grid_size, z_max=60, num_cores=5, seed=42)
+    optimizer = TerrainOptimizer(
+        grid_size=grid_size,
+        z_max=60,
+        num_cores=5,
+        seed=42,
+        well_optimizer=OPTIMIZATION_METHOD
+    )
     
     # Set optimization parameters
     max_iterations = 10
@@ -178,7 +194,7 @@ def main():
     print("\nGenerating step-by-step visualizations...")
     
     # Create a directory for step visualizations if it doesn't exist
-    step_dir = "optimization_steps"
+    step_dir = f"optimization_steps_{OPTIMIZATION_METHOD}"
     if not os.path.exists(step_dir):
         os.makedirs(step_dir)
     
@@ -259,9 +275,9 @@ def main():
     
     # Save the optimization results plot
     optimizer.plot_optimization_results(goal_terrain, final_terrain)
-    plt.savefig('optimization_results.png')
+    plt.savefig(f'optimization_results_{OPTIMIZATION_METHOD}.png')
     plt.close()
-    print("Optimization results visualization saved to 'optimization_results.png'")
+    print(f"Optimization results visualization saved to 'optimization_results_{OPTIMIZATION_METHOD}.png'")
     
     # 9. Well Characteristics
     print("\nWell characteristics:")
@@ -279,8 +295,8 @@ def main():
     try:
         print("\nGenerating 3D animation...")
         fig = optimizer.create_3D_animation()
-        fig.write_html('terrain_animation.html')
-        print("3D animation saved to 'terrain_animation.html'")
+        fig.write_html(f'terrain_animation_{OPTIMIZATION_METHOD}.html')
+        print(f"3D animation saved to 'terrain_animation_{OPTIMIZATION_METHOD}.html'")
     except Exception as e:
         print(f"Could not generate 3D animation: {e}")
     

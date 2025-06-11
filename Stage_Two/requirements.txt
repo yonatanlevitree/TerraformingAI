@@ -5,6 +5,11 @@ matplotlib>=3.4.0
 scipy>=1.7.0
 plotly>=5.3.0
 
+# API dependencies
+fastapi>=0.68.0
+uvicorn>=0.15.0
+pydantic>=1.8.0
+
 # Additional utilities
 ipython>=7.0.0  # For running animations in the notebook environment
 ipywidgets>=7.6.0  # Required for interactive plotly visualizations
